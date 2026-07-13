@@ -121,6 +121,7 @@ class DietLog(models.Model):
     meal2 = models.BooleanField(default=False)
     meal3 = models.BooleanField(default=False)
     meal4 = models.BooleanField(default=False)
+    meal5 = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

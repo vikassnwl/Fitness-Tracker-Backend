@@ -80,4 +80,4 @@ class BodyEntrySerializer(serializers.ModelSerializer):
 class DietLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = DietLog
-        fields = ['id', 'date', 'meal1', 'meal2', 'meal3', 'meal4', 'created_at', 'updated_at']
+        fields = ['id', 'date', 'meal1', 'meal2', 'meal3', 'meal4', 'meal5', 'created_at', 'updated_at']
