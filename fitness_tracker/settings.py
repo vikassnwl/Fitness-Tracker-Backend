@@ -8,9 +8,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = 'local-fitness-tracker-secret'
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+SECRET_KEY = os.getenv("SECRET_KEY")
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -56,8 +56,8 @@ TEMPLATES = [
 WSGI_APPLICATION = 'fitness_tracker.wsgi.application'
 
 DATABASES = {
-    'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+    "default": dj_database_url.config(
+        default=os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
         conn_max_age=600,
         ssl_require=False,
     )
