@@ -1,10 +1,35 @@
 from rest_framework import serializers
-from .models import Exercise, Workout, WorkoutExercise, ExerciseSet, Meal, MealItem, FavoriteMeal, BodyEntry, DietLog
+from .models import (
+    Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
+    Meal, MealItem, FavoriteMeal, BodyEntry, DietLog,
+)
 
 class ExerciseSerializer(serializers.ModelSerializer):
     class Meta:
         model = Exercise
-        fields = '__all__'
+        fields = ['id', 'name', 'muscle_group', 'equipment', 'notes', 'created_at']
+        read_only_fields = ['created_at']
+
+
+class SplitDayExerciseSerializer(serializers.ModelSerializer):
+    exercise_detail = ExerciseSerializer(source='exercise', read_only=True)
+    exercise_name = serializers.CharField(source='exercise.name', read_only=True)
+    muscle_group = serializers.CharField(source='exercise.muscle_group', read_only=True)
+    equipment = serializers.CharField(source='exercise.equipment', read_only=True)
+
+    class Meta:
+        model = SplitDayExercise
+        fields = [
+            'id', 'split', 'exercise', 'order', 'created_at',
+            'exercise_detail', 'exercise_name', 'muscle_group', 'equipment',
+        ]
+        read_only_fields = ['created_at', 'order']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and getattr(request, 'user', None) and request.user.is_authenticated:
+            self.fields['exercise'].queryset = Exercise.objects.filter(user=request.user)
 
 class ExerciseSetSerializer(serializers.ModelSerializer):
     class Meta:

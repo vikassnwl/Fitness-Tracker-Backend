@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 MEAL_TYPES = [
@@ -16,15 +17,54 @@ SPLIT_CHOICES = [
     ('custom', 'Custom'),
 ]
 
+DAY_SPLIT_CHOICES = [
+    ('push', 'Push'),
+    ('pull', 'Pull'),
+    ('legs', 'Legs'),
+]
+
 class Exercise(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='exercises',
+        on_delete=models.CASCADE,
+    )
     name = models.CharField(max_length=120)
     muscle_group = models.CharField(max_length=80, blank=True)
     equipment = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        ordering = ['name']
+        unique_together = [('user', 'name')]
+
     def __str__(self):
         return self.name
+
+
+class SplitDayExercise(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='split_day_exercises',
+        on_delete=models.CASCADE,
+    )
+    split = models.CharField(max_length=20, choices=DAY_SPLIT_CHOICES)
+    exercise = models.ForeignKey(
+        Exercise,
+        related_name='split_assignments',
+        on_delete=models.CASCADE,
+    )
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['split', 'order', 'id']
+        unique_together = [('user', 'split', 'exercise')]
+
+    def __str__(self):
+        return f'{self.user_id}:{self.split}:{self.exercise_id}'
+
 
 class Workout(models.Model):
     name = models.CharField(max_length=120, default='Untitled Workout')

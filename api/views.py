@@ -1,30 +1,78 @@
 from datetime import date, timedelta
 from django.db.models import Count, FloatField, Max, Sum, F, Q
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Exercise, Workout, WorkoutExercise, ExerciseSet, Meal, MealItem, FavoriteMeal, BodyEntry, DietLog
+from .models import (
+    Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
+    Meal, MealItem, FavoriteMeal, BodyEntry, DietLog,
+)
 from .serializers import (
-    ExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
+    ExerciseSerializer, SplitDayExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
     ExerciseSetSerializer, MealSerializer, FavoriteMealSerializer, BodyEntrySerializer, DietLogSerializer
 )
 
+VALID_SPLITS = {'push', 'pull', 'legs'}
+
 class ExerciseViewSet(viewsets.ModelViewSet):
-    queryset = Exercise.objects.all().order_by('name')
     serializer_class = ExerciseSerializer
+
+    def get_queryset(self):
+        return Exercise.objects.filter(user=self.request.user).order_by('name')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
     def search(self, request):
         query = request.query_params.get('q', '').strip()
         if not query:
             return Response([])
-        exercises = Exercise.objects.filter(
+        exercises = self.get_queryset().filter(
             Q(name__icontains=query) | Q(muscle_group__icontains=query)
-        ).order_by('name')[:20]
+        )[:20]
         serializer = self.get_serializer(exercises, many=True)
         return Response(serializer.data)
+
+
+class SplitDayExerciseViewSet(viewsets.ModelViewSet):
+    serializer_class = SplitDayExerciseSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = SplitDayExercise.objects.filter(user=self.request.user).select_related('exercise')
+        split = self.request.query_params.get('split')
+        if split in VALID_SPLITS:
+            qs = qs.filter(split=split)
+        return qs.order_by('order', 'id')
+
+    def perform_create(self, serializer):
+        split = serializer.validated_data['split']
+        if split not in VALID_SPLITS:
+            raise serializers.ValidationError({'split': 'Invalid split.'})
+        next_order = SplitDayExercise.objects.filter(user=self.request.user, split=split).count()
+        serializer.save(user=self.request.user, order=next_order)
+
+    @action(detail=False, methods=['post'])
+    def reorder(self, request):
+        """
+        Accepts: [{"id": 1, "order": 0}, {"id": 2, "order": 1}, ...]
+        """
+        items = request.data
+        if not isinstance(items, list):
+            return Response({'error': 'Expected a list'}, status=status.HTTP_400_BAD_REQUEST)
+        owned_ids = set(
+            SplitDayExercise.objects.filter(user=request.user).values_list('id', flat=True)
+        )
+        for item in items:
+            entry_id = item.get('id')
+            if entry_id not in owned_ids:
+                continue
+            SplitDayExercise.objects.filter(id=entry_id, user=request.user).update(order=item['order'])
+        return Response({'status': 'ok'})
+
 
 class WorkoutViewSet(viewsets.ModelViewSet):
     queryset = Workout.objects.prefetch_related('exercises__sets').all()
