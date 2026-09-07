@@ -67,6 +67,11 @@ class SplitDayExercise(models.Model):
 
 
 class Workout(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='workouts',
+        on_delete=models.CASCADE,
+    )
     name = models.CharField(max_length=120, default='Untitled Workout')
     workout_type = models.CharField(max_length=20, choices=SPLIT_CHOICES, default='full')
     date = models.DateField(null=True, blank=True)
@@ -111,6 +116,11 @@ class ExerciseSet(models.Model):
         ordering = ['set_number']
 
 class Meal(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='meals',
+        on_delete=models.CASCADE,
+    )
     date = models.DateField()
     meal_type = models.CharField(max_length=20, choices=MEAL_TYPES, default='breakfast')
     notes = models.TextField(blank=True)
@@ -129,6 +139,11 @@ class MealItem(models.Model):
     fat = models.FloatField(default=0)
 
 class FavoriteMeal(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='favorite_meals',
+        on_delete=models.CASCADE,
+    )
     name = models.CharField(max_length=120)
     meal_type = models.CharField(max_length=20, choices=MEAL_TYPES, default='breakfast')
     notes = models.TextField(blank=True)
@@ -139,6 +154,11 @@ class FavoriteMeal(models.Model):
         return self.name
 
 class BodyEntry(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='body_entries',
+        on_delete=models.CASCADE,
+    )
     date = models.DateField()
     weight = models.FloatField(null=True, blank=True)
     body_fat = models.FloatField(null=True, blank=True)
@@ -156,7 +176,12 @@ class BodyEntry(models.Model):
         return f'{self.date} body entry'
 
 class DietLog(models.Model):
-    date = models.DateField(unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='diet_logs',
+        on_delete=models.CASCADE,
+    )
+    date = models.DateField()
     meal1 = models.BooleanField(default=False)
     meal2 = models.BooleanField(default=False)
     meal3 = models.BooleanField(default=False)
@@ -167,6 +192,7 @@ class DietLog(models.Model):
 
     class Meta:
         ordering = ['-date']
+        unique_together = [('user', 'date')]
 
     def __str__(self):
         return f'Diet log for {self.date}'

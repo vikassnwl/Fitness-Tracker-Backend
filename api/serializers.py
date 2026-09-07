@@ -36,6 +36,15 @@ class ExerciseSetSerializer(serializers.ModelSerializer):
         model = ExerciseSet
         fields = '__all__'
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and getattr(request, 'user', None) and request.user.is_authenticated:
+            self.fields['workout_exercise'].queryset = WorkoutExercise.objects.filter(
+                workout__user=request.user
+            )
+
+
 class WorkoutExerciseSerializer(serializers.ModelSerializer):
     sets = ExerciseSetSerializer(many=True, read_only=True)
     exercise_name = serializers.SerializerMethodField()
@@ -46,6 +55,13 @@ class WorkoutExerciseSerializer(serializers.ModelSerializer):
         model = WorkoutExercise
         fields = ['id', 'workout', 'exercise', 'custom_name', 'exercise_name', 'muscle_group', 'equipment', 'target_reps', 'target_sets', 'notes', 'order', 'sets']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and getattr(request, 'user', None) and request.user.is_authenticated:
+            self.fields['workout'].queryset = Workout.objects.filter(user=request.user)
+            self.fields['exercise'].queryset = Exercise.objects.filter(user=request.user)
+
     def get_exercise_name(self, obj):
         return obj.custom_name or (obj.exercise.name if obj.exercise else None)
 
@@ -55,12 +71,14 @@ class WorkoutExerciseSerializer(serializers.ModelSerializer):
     def get_equipment(self, obj):
         return obj.exercise.equipment if obj.exercise else ''
 
+
 class WorkoutSerializer(serializers.ModelSerializer):
     exercises = WorkoutExerciseSerializer(many=True, read_only=True)
 
     class Meta:
         model = Workout
         fields = ['id', 'name', 'workout_type', 'date', 'notes', 'created_at', 'exercises']
+        read_only_fields = ['created_at']
 
 class MealItemSerializer(serializers.ModelSerializer):
     class Meta:
@@ -73,6 +91,7 @@ class MealSerializer(serializers.ModelSerializer):
     class Meta:
         model = Meal
         fields = ['id', 'date', 'meal_type', 'notes', 'created_at', 'items']
+        read_only_fields = ['created_at']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
@@ -92,17 +111,26 @@ class MealSerializer(serializers.ModelSerializer):
                 MealItem.objects.create(meal=instance, **item_data)
         return instance
 
+
 class FavoriteMealSerializer(serializers.ModelSerializer):
     class Meta:
         model = FavoriteMeal
-        fields = '__all__'
+        fields = ['id', 'name', 'meal_type', 'notes', 'items', 'created_at']
+        read_only_fields = ['created_at']
+
 
 class BodyEntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = BodyEntry
-        fields = '__all__'
+        fields = [
+            'id', 'date', 'weight', 'body_fat', 'chest', 'waist',
+            'arms', 'legs', 'notes', 'created_at',
+        ]
+        read_only_fields = ['created_at']
+
 
 class DietLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = DietLog
         fields = ['id', 'date', 'meal1', 'meal2', 'meal3', 'meal4', 'meal5', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']

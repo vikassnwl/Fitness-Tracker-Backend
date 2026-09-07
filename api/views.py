@@ -1,13 +1,13 @@
 from datetime import date, timedelta
 from django.db.models import Count, FloatField, Max, Sum, F, Q
 from rest_framework import viewsets, status, serializers
-from rest_framework.decorators import action, api_view
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
     Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
-    Meal, MealItem, FavoriteMeal, BodyEntry, DietLog,
+    Meal, FavoriteMeal, BodyEntry, DietLog,
 )
 from .serializers import (
     ExerciseSerializer, SplitDayExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
@@ -15,6 +15,7 @@ from .serializers import (
 )
 
 VALID_SPLITS = {'push', 'pull', 'legs'}
+
 
 class ExerciseViewSet(viewsets.ModelViewSet):
     serializer_class = ExerciseSerializer
@@ -75,12 +76,31 @@ class SplitDayExerciseViewSet(viewsets.ModelViewSet):
 
 
 class WorkoutViewSet(viewsets.ModelViewSet):
-    queryset = Workout.objects.prefetch_related('exercises__sets').all()
     serializer_class = WorkoutSerializer
 
+    def get_queryset(self):
+        return Workout.objects.filter(user=self.request.user).prefetch_related('exercises__sets')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
 class WorkoutExerciseViewSet(viewsets.ModelViewSet):
-    queryset = WorkoutExercise.objects.prefetch_related('sets').all()
     serializer_class = WorkoutExerciseSerializer
+
+    def get_queryset(self):
+        return WorkoutExercise.objects.filter(
+            workout__user=self.request.user
+        ).prefetch_related('sets')
+
+    def perform_create(self, serializer):
+        workout = serializer.validated_data['workout']
+        if workout.user_id != self.request.user.id:
+            raise serializers.ValidationError({'workout': 'Not found.'})
+        exercise = serializer.validated_data.get('exercise')
+        if exercise is not None and exercise.user_id != self.request.user.id:
+            raise serializers.ValidationError({'exercise': 'Not found.'})
+        serializer.save()
 
     @action(detail=False, methods=['post'])
     def reorder(self, request):
@@ -91,21 +111,50 @@ class WorkoutExerciseViewSet(viewsets.ModelViewSet):
         items = request.data
         if not isinstance(items, list):
             return Response({'error': 'Expected a list'}, status=status.HTTP_400_BAD_REQUEST)
+        owned_ids = set(
+            WorkoutExercise.objects.filter(workout__user=request.user).values_list('id', flat=True)
+        )
         for item in items:
-            WorkoutExercise.objects.filter(id=item['id']).update(order=item['order'])
+            entry_id = item.get('id')
+            if entry_id not in owned_ids:
+                continue
+            WorkoutExercise.objects.filter(
+                id=entry_id, workout__user=request.user
+            ).update(order=item['order'])
         return Response({'status': 'ok'})
 
+
 class ExerciseSetViewSet(viewsets.ModelViewSet):
-    queryset = ExerciseSet.objects.all()
     serializer_class = ExerciseSetSerializer
 
+    def get_queryset(self):
+        return ExerciseSet.objects.filter(workout_exercise__workout__user=self.request.user)
+
+    def perform_create(self, serializer):
+        workout_exercise = serializer.validated_data['workout_exercise']
+        if workout_exercise.workout.user_id != self.request.user.id:
+            raise serializers.ValidationError({'workout_exercise': 'Not found.'})
+        serializer.save()
+
+
 class MealViewSet(viewsets.ModelViewSet):
-    queryset = Meal.objects.prefetch_related('items').all()
     serializer_class = MealSerializer
 
+    def get_queryset(self):
+        return Meal.objects.filter(user=self.request.user).prefetch_related('items')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
 class FavoriteMealViewSet(viewsets.ModelViewSet):
-    queryset = FavoriteMeal.objects.all()
     serializer_class = FavoriteMealSerializer
+
+    def get_queryset(self):
+        return FavoriteMeal.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'])
     def apply(self, request, pk=None):
@@ -116,20 +165,32 @@ class FavoriteMealViewSet(viewsets.ModelViewSet):
             'notes': favorite.notes,
             'items': favorite.items,
         }
-        serializer = MealSerializer(data=meal_data)
+        serializer = MealSerializer(data=meal_data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        meal = serializer.save()
+        meal = serializer.save(user=request.user)
         return Response(MealSerializer(meal).data, status=status.HTTP_201_CREATED)
 
+
 class BodyEntryViewSet(viewsets.ModelViewSet):
-    queryset = BodyEntry.objects.all()
     serializer_class = BodyEntrySerializer
+
+    def get_queryset(self):
+        return BodyEntry.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
 
 class DashboardView(APIView):
     def get(self, request):
+        user = request.user
         today = date.today()
-        workout = Workout.objects.filter(date=today).prefetch_related('exercises__exercise').first()
-        today_meals = Meal.objects.filter(date=today)
+        workout = (
+            Workout.objects.filter(user=user, date=today)
+            .prefetch_related('exercises__exercise')
+            .first()
+        )
+        today_meals = Meal.objects.filter(user=user, date=today)
         nutrition_totals = today_meals.aggregate(
             calories=Sum('items__calories'),
             protein=Sum('items__protein'),
@@ -137,19 +198,21 @@ class DashboardView(APIView):
             fat=Sum('items__fat'),
         )
         nutrition_totals = {k: v or 0 for k, v in nutrition_totals.items()}
-        latest_body = BodyEntry.objects.order_by('-date').first()
-        recent_prs = ExerciseSet.objects.values('workout_exercise__exercise__name').annotate(
-            max_weight=Max('weight'),
-            reps=Max('reps')
-        ).order_by('-max_weight')[:3]
+        latest_body = BodyEntry.objects.filter(user=user).order_by('-date').first()
+        recent_prs = (
+            ExerciseSet.objects.filter(workout_exercise__workout__user=user)
+            .values('workout_exercise__exercise__name')
+            .annotate(max_weight=Max('weight'), reps=Max('reps'))
+            .order_by('-max_weight')[:3]
+        )
 
         streak = 0
         current_date = today
-        while Workout.objects.filter(date=current_date).exists():
+        while Workout.objects.filter(user=user, date=current_date).exists():
             streak += 1
             current_date -= timedelta(days=1)
 
-        latest_workout = Workout.objects.order_by('-date').first()
+        latest_workout = Workout.objects.filter(user=user).order_by('-date').first()
         next_planned = None
         if latest_workout:
             if latest_workout.workout_type == 'push':
@@ -170,15 +233,39 @@ class DashboardView(APIView):
             'upcoming_workout': next_planned,
         })
 
+
 class AnalyticsView(APIView):
     def get(self, request):
-        weight_history = BodyEntry.objects.order_by('date').values('date', 'weight')
-        calories_history = Meal.objects.values('date').annotate(total=Sum('items__calories')).order_by('date')
-        protein_history = Meal.objects.values('date').annotate(total=Sum('items__protein')).order_by('date')
-        volume_history = WorkoutExercise.objects.annotate(
-            total_volume=Sum(F('sets__weight') * F('sets__reps'), output_field=FloatField())
-        ).values('workout__date', 'total_volume').order_by('workout__date')
-        frequency = Workout.objects.values('date').annotate(count=Count('id')).order_by('date')
+        user = request.user
+        weight_history = (
+            BodyEntry.objects.filter(user=user).order_by('date').values('date', 'weight')
+        )
+        calories_history = (
+            Meal.objects.filter(user=user)
+            .values('date')
+            .annotate(total=Sum('items__calories'))
+            .order_by('date')
+        )
+        protein_history = (
+            Meal.objects.filter(user=user)
+            .values('date')
+            .annotate(total=Sum('items__protein'))
+            .order_by('date')
+        )
+        volume_history = (
+            WorkoutExercise.objects.filter(workout__user=user)
+            .annotate(
+                total_volume=Sum(F('sets__weight') * F('sets__reps'), output_field=FloatField())
+            )
+            .values('workout__date', 'total_volume')
+            .order_by('workout__date')
+        )
+        frequency = (
+            Workout.objects.filter(user=user)
+            .values('date')
+            .annotate(count=Count('id'))
+            .order_by('date')
+        )
         return Response({
             'weight': list(weight_history),
             'calories': list(calories_history),
@@ -187,10 +274,16 @@ class AnalyticsView(APIView):
             'workout_frequency': list(frequency),
         })
 
+
 class DietLogViewSet(viewsets.ModelViewSet):
-    queryset = DietLog.objects.all()
     serializer_class = DietLogSerializer
     lookup_field = 'date'
+
+    def get_queryset(self):
+        return DietLog.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=['get'])
     def by_date(self, request):
@@ -198,7 +291,7 @@ class DietLogViewSet(viewsets.ModelViewSet):
         if not date_str:
             return Response({'error': 'date parameter required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            diet_log = DietLog.objects.get(date=date_str)
+            diet_log = DietLog.objects.get(user=request.user, date=date_str)
             serializer = self.get_serializer(diet_log)
             return Response(serializer.data)
         except DietLog.DoesNotExist:
@@ -206,4 +299,4 @@ class DietLogViewSet(viewsets.ModelViewSet):
 
     def get_object(self):
         date_str = self.kwargs.get('date')
-        return DietLog.objects.get_or_create(date=date_str)[0]
+        return DietLog.objects.get_or_create(user=self.request.user, date=date_str)[0]

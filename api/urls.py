@@ -9,13 +9,13 @@ from .views import (
 router = DefaultRouter()
 router.register('exercises', ExerciseViewSet, basename='exercise')
 router.register('split-day-exercises', SplitDayExerciseViewSet, basename='split-day-exercise')
-router.register('workouts', WorkoutViewSet)
-router.register('workout-exercises', WorkoutExerciseViewSet)
-router.register('exercise-sets', ExerciseSetViewSet)
-router.register('meals', MealViewSet)
-router.register('favorite-meals', FavoriteMealViewSet)
-router.register('body-entries', BodyEntryViewSet)
-router.register('diet-logs', DietLogViewSet)
+router.register('workouts', WorkoutViewSet, basename='workout')
+router.register('workout-exercises', WorkoutExerciseViewSet, basename='workout-exercise')
+router.register('exercise-sets', ExerciseSetViewSet, basename='exercise-set')
+router.register('meals', MealViewSet, basename='meal')
+router.register('favorite-meals', FavoriteMealViewSet, basename='favorite-meal')
+router.register('body-entries', BodyEntryViewSet, basename='body-entry')
+router.register('diet-logs', DietLogViewSet, basename='diet-log')
 
 urlpatterns = [
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
