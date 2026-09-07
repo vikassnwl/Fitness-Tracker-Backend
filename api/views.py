@@ -78,11 +78,27 @@ class SplitDayExerciseViewSet(viewsets.ModelViewSet):
 
 class WorkoutViewSet(viewsets.ModelViewSet):
     serializer_class = WorkoutSerializer
+    pagination_class = None
 
     def get_queryset(self):
-        return Workout.objects.filter(user=self.request.user).prefetch_related(
+        qs = Workout.objects.filter(user=self.request.user).prefetch_related(
             'exercises__sets', 'exercises__exercise'
         )
+        params = self.request.query_params
+        date_exact = params.get('date')
+        date_after = params.get('date_after')
+        date_before = params.get('date_before')
+        workout_type = params.get('workout_type')
+
+        if date_exact:
+            qs = qs.filter(date=date_exact)
+        if date_after:
+            qs = qs.filter(date__gte=date_after)
+        if date_before:
+            qs = qs.filter(date__lte=date_before)
+        if workout_type:
+            qs = qs.filter(workout_type__iexact=workout_type)
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
