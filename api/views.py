@@ -11,7 +11,8 @@ from .models import (
 )
 from .serializers import (
     ExerciseSerializer, SplitDayExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
-    ExerciseSetSerializer, MealSerializer, FavoriteMealSerializer, BodyEntrySerializer, DietLogSerializer
+    ExerciseSetSerializer, MealSerializer, FavoriteMealSerializer, BodyEntrySerializer, DietLogSerializer,
+    WorkoutSetUpdateItemSerializer,
 )
 
 VALID_SPLITS = {'push', 'pull', 'legs'}
@@ -79,10 +80,52 @@ class WorkoutViewSet(viewsets.ModelViewSet):
     serializer_class = WorkoutSerializer
 
     def get_queryset(self):
-        return Workout.objects.filter(user=self.request.user).prefetch_related('exercises__sets')
+        return Workout.objects.filter(user=self.request.user).prefetch_related(
+            'exercises__sets', 'exercises__exercise'
+        )
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        workout = self.get_queryset().get(pk=serializer.instance.pk)
+        output = WorkoutSerializer(workout, context={'request': request})
+        headers = self.get_success_headers(output.data)
+        return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=['put'])
+    def save_log(self, request, pk=None):
+        """
+        Bulk-update set values for an owned workout in one request.
+        Body: { "sets": [{ "id", "weight", "reps", "completed", "notes" }, ...] }
+        """
+        workout = self.get_object()
+        serializer = WorkoutSetUpdateItemSerializer(data=request.data.get('sets', []), many=True)
+        serializer.is_valid(raise_exception=True)
+
+        owned_sets = {
+            item.id: item
+            for item in ExerciseSet.objects.filter(workout_exercise__workout=workout)
+        }
+        to_update = []
+        for item in serializer.validated_data:
+            exercise_set = owned_sets.get(item['id'])
+            if exercise_set is None:
+                continue
+            exercise_set.weight = item.get('weight', 0) or 0
+            exercise_set.reps = item.get('reps', 0) or 0
+            exercise_set.completed = bool(item.get('completed', False))
+            exercise_set.notes = item.get('notes', '') or ''
+            to_update.append(exercise_set)
+
+        if to_update:
+            ExerciseSet.objects.bulk_update(to_update, ['weight', 'reps', 'completed', 'notes'])
+
+        workout = self.get_queryset().get(pk=workout.pk)
+        return Response(WorkoutSerializer(workout, context={'request': request}).data)
 
 
 class WorkoutExerciseViewSet(viewsets.ModelViewSet):
