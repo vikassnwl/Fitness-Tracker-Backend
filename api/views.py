@@ -7,12 +7,12 @@ from rest_framework.views import APIView
 
 from .models import (
     Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
-    Meal, FavoriteMeal, BodyEntry, DietLog,
+    Meal, FavoriteMeal, BodyEntry, DietLog, DayNote,
 )
 from .serializers import (
     ExerciseSerializer, SplitDayExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
     ExerciseSetSerializer, MealSerializer, FavoriteMealSerializer, BodyEntrySerializer, DietLogSerializer,
-    WorkoutSetUpdateItemSerializer,
+    WorkoutSetUpdateItemSerializer, DayNoteSerializer,
 )
 
 VALID_SPLITS = {'push', 'pull', 'legs'}
@@ -359,3 +359,29 @@ class DietLogViewSet(viewsets.ModelViewSet):
     def get_object(self):
         date_str = self.kwargs.get('date')
         return DietLog.objects.get_or_create(user=self.request.user, date=date_str)[0]
+
+
+class DayNoteViewSet(viewsets.ModelViewSet):
+    serializer_class = DayNoteSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = DayNote.objects.filter(user=self.request.user)
+        params = self.request.query_params
+        date_exact = params.get('date')
+        date_after = params.get('date_after')
+        date_before = params.get('date_before')
+        reason = params.get('reason')
+
+        if date_exact:
+            qs = qs.filter(date=date_exact)
+        if date_after:
+            qs = qs.filter(date__gte=date_after)
+        if date_before:
+            qs = qs.filter(date__lte=date_before)
+        if reason:
+            qs = qs.filter(reason__iexact=reason)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)

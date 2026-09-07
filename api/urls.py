@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .auth_views import LoginView, LogoutView, MeView, RegisterView
 from .views import (
     ExerciseViewSet, SplitDayExerciseViewSet, WorkoutViewSet, WorkoutExerciseViewSet, ExerciseSetViewSet,
-    MealViewSet, FavoriteMealViewSet, BodyEntryViewSet, DietLogViewSet, DashboardView, AnalyticsView
+    MealViewSet, FavoriteMealViewSet, BodyEntryViewSet, DietLogViewSet, DayNoteViewSet,
+    DashboardView, AnalyticsView,
 )
 
 router = DefaultRouter()
@@ -16,6 +17,7 @@ router.register('meals', MealViewSet, basename='meal')
 router.register('favorite-meals', FavoriteMealViewSet, basename='favorite-meal')
 router.register('body-entries', BodyEntryViewSet, basename='body-entry')
 router.register('diet-logs', DietLogViewSet, basename='diet-log')
+router.register('day-notes', DayNoteViewSet, basename='day-note')
 
 urlpatterns = [
     path('auth/register/', RegisterView.as_view(), name='auth-register'),

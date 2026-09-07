@@ -196,3 +196,33 @@ class DietLog(models.Model):
 
     def __str__(self):
         return f'Diet log for {self.date}'
+
+
+DAY_NOTE_REASONS = [
+    ('injury', 'Injury'),
+    ('sick', 'Sick'),
+    ('travel', 'Travel'),
+    ('event', 'Event'),
+    ('rest', 'Rest'),
+    ('other', 'Other'),
+]
+
+
+class DayNote(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='day_notes',
+        on_delete=models.CASCADE,
+    )
+    date = models.DateField()
+    reason = models.CharField(max_length=20, choices=DAY_NOTE_REASONS, default='other')
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+        unique_together = [('user', 'date')]
+
+    def __str__(self):
+        return f'Day note for {self.date}'

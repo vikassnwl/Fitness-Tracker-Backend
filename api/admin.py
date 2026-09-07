@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
-    Meal, MealItem, FavoriteMeal, BodyEntry,
+    Meal, MealItem, FavoriteMeal, BodyEntry, DayNote,
 )
 
 admin.site.register(Exercise)
@@ -13,3 +13,4 @@ admin.site.register(Meal)
 admin.site.register(MealItem)
 admin.site.register(FavoriteMeal)
 admin.site.register(BodyEntry)
+admin.site.register(DayNote)

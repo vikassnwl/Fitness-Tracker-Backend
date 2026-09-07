@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
-    Meal, MealItem, FavoriteMeal, BodyEntry, DietLog,
+    Meal, MealItem, FavoriteMeal, BodyEntry, DietLog, DayNote,
 )
 
 class ExerciseSerializer(serializers.ModelSerializer):
@@ -201,4 +201,11 @@ class DietLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = DietLog
         fields = ['id', 'date', 'meal1', 'meal2', 'meal3', 'meal4', 'meal5', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class DayNoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DayNote
+        fields = ['id', 'date', 'reason', 'note', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
