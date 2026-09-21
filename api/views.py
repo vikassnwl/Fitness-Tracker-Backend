@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from django.db import transaction
 from django.db.models import Count, FloatField, Max, Sum, F, Q
 from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action
@@ -7,15 +8,52 @@ from rest_framework.views import APIView
 
 from .models import (
     Exercise, SplitDayExercise, Workout, WorkoutExercise, ExerciseSet,
-    Meal, FavoriteMeal, BodyEntry, DietLog, DayNote,
+    Meal, FavoriteMeal, BodyEntry, DietLog, DayNote, DAY_NOTE_REASONS,
 )
 from .serializers import (
     ExerciseSerializer, SplitDayExerciseSerializer, WorkoutSerializer, WorkoutExerciseSerializer,
     ExerciseSetSerializer, MealSerializer, FavoriteMealSerializer, BodyEntrySerializer, DietLogSerializer,
-    WorkoutSetUpdateItemSerializer, DayNoteSerializer,
+    WorkoutSetUpdateItemSerializer, DayNoteSerializer, WorkoutCalendarSerializer,
 )
 
 VALID_SPLITS = {'push', 'pull', 'legs'}
+DEFAULT_LOG_SET_COUNT = 3
+
+
+def _append_exercise_to_existing_split_logs(user, split, exercise):
+    workouts = (
+        Workout.objects.filter(user=user, workout_type=split)
+        .annotate(
+            max_order=Max('exercises__order'),
+            matching_entries=Count('exercises', filter=Q(exercises__exercise=exercise)),
+        )
+    )
+    created_entries = []
+    for workout in workouts:
+        if workout.matching_entries:
+            continue
+        next_order = 0 if workout.max_order is None else workout.max_order + 1
+        created_entries.append(
+            WorkoutExercise.objects.create(
+                workout=workout,
+                exercise=exercise,
+                order=next_order,
+            )
+        )
+    if not created_entries:
+        return
+    ExerciseSet.objects.bulk_create([
+        ExerciseSet(
+            workout_exercise=entry,
+            set_number=set_number,
+            weight=0,
+            reps=0,
+            completed=False,
+            notes='',
+        )
+        for entry in created_entries
+        for set_number in range(1, DEFAULT_LOG_SET_COUNT + 1)
+    ])
 
 
 class ExerciseViewSet(viewsets.ModelViewSet):
@@ -54,8 +92,11 @@ class SplitDayExerciseViewSet(viewsets.ModelViewSet):
         split = serializer.validated_data['split']
         if split not in VALID_SPLITS:
             raise serializers.ValidationError({'split': 'Invalid split.'})
+        exercise = serializer.validated_data['exercise']
         next_order = SplitDayExercise.objects.filter(user=self.request.user, split=split).count()
-        serializer.save(user=self.request.user, order=next_order)
+        with transaction.atomic():
+            serializer.save(user=self.request.user, order=next_order)
+            _append_exercise_to_existing_split_logs(self.request.user, split, exercise)
 
     @action(detail=False, methods=['post'])
     def reorder(self, request):
@@ -77,13 +118,19 @@ class SplitDayExerciseViewSet(viewsets.ModelViewSet):
 
 
 class WorkoutViewSet(viewsets.ModelViewSet):
-    serializer_class = WorkoutSerializer
     pagination_class = None
 
+    def get_serializer_class(self):
+        compact = str(self.request.query_params.get('compact', '')).lower() in ('1', 'true')
+        if self.action == 'list' and compact:
+            return WorkoutCalendarSerializer
+        return WorkoutSerializer
+
     def get_queryset(self):
-        qs = Workout.objects.filter(user=self.request.user).prefetch_related(
-            'exercises__sets', 'exercises__exercise'
-        )
+        qs = Workout.objects.filter(user=self.request.user)
+        compact = str(self.request.query_params.get('compact', '')).lower() in ('1', 'true')
+        if not (self.action == 'list' and compact):
+            qs = qs.prefetch_related('exercises__sets', 'exercises__exercise')
         params = self.request.query_params
         date_exact = params.get('date')
         date_after = params.get('date_after')
@@ -142,6 +189,58 @@ class WorkoutViewSet(viewsets.ModelViewSet):
 
         workout = self.get_queryset().get(pk=workout.pk)
         return Response(WorkoutSerializer(workout, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def progress(self, request):
+        workout_type = (request.query_params.get('workout_type') or '').strip().lower()
+        exercise_name = (request.query_params.get('exercise') or '').strip()
+        if workout_type not in VALID_SPLITS or not exercise_name:
+            return Response(
+                {'detail': 'workout_type and exercise are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        expected_name = {
+            'push': 'Push Workout',
+            'pull': 'Pull Workout',
+            'legs': 'Leg Workout',
+        }[workout_type]
+
+        workouts = (
+            Workout.objects.filter(
+                user=request.user,
+                workout_type=workout_type,
+                name=expected_name,
+                date__isnull=False,
+            )
+            .prefetch_related('exercises__sets', 'exercises__exercise')
+            .order_by('date', 'id')
+        )
+
+        points = []
+        for workout in workouts:
+            matching = None
+            for entry in workout.exercises.all():
+                name = (entry.custom_name or (entry.exercise.name if entry.exercise else '')).strip()
+                if name == exercise_name:
+                    matching = entry
+                    break
+            if matching is None:
+                continue
+            ordered_sets = sorted(matching.sets.all(), key=lambda item: item.set_number)
+            if not ordered_sets:
+                continue
+            chosen = next((item for item in ordered_sets if item.set_number == 3), ordered_sets[-1])
+            weight = float(chosen.weight or 0)
+            reps = int(chosen.reps or 0)
+            points.append({
+                'date': workout.date.isoformat(),
+                'score': round(weight * (1 + reps / 100), 2),
+                'weight': weight,
+                'reps': reps,
+            })
+
+        return Response({'points': points})
 
 
 class WorkoutExerciseViewSet(viewsets.ModelViewSet):
@@ -385,3 +484,59 @@ class DayNoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def range(self, request):
+        start_raw = request.data.get('start_date')
+        end_raw = request.data.get('end_date', start_raw)
+        reason = (request.data.get('reason') or 'other').strip().lower()
+        note_text = request.data.get('note') or ''
+
+        try:
+            start = date.fromisoformat(str(start_raw))
+            end = date.fromisoformat(str(end_raw))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'start_date and end_date must be YYYY-MM-DD.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if end < start:
+            start, end = end, start
+
+        day_count = (end - start).days + 1
+        if day_count > 93:
+            return Response(
+                {'detail': 'Choose a range of 93 days or fewer.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        valid_reasons = {value for value, _label in DAY_NOTE_REASONS}
+        if reason not in valid_reasons:
+            return Response({'reason': 'Invalid skip reason.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        dates = [start + timedelta(days=offset) for offset in range(day_count)]
+        existing = {
+            item.date: item
+            for item in DayNote.objects.filter(user=request.user, date__range=(start, end))
+        }
+        to_create = []
+        to_update = []
+        with transaction.atomic():
+            for day in dates:
+                current = existing.get(day)
+                if current is None:
+                    to_create.append(
+                        DayNote(user=request.user, date=day, reason=reason, note=note_text)
+                    )
+                else:
+                    current.reason = reason
+                    current.note = note_text
+                    to_update.append(current)
+            if to_create:
+                DayNote.objects.bulk_create(to_create)
+            if to_update:
+                DayNote.objects.bulk_update(to_update, ['reason', 'note'])
+
+        notes = DayNote.objects.filter(user=request.user, date__range=(start, end)).order_by('date')
+        return Response(DayNoteSerializer(notes, many=True).data, status=status.HTTP_201_CREATED)

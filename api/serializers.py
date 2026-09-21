@@ -148,6 +148,12 @@ class WorkoutSerializer(serializers.ModelSerializer):
 
         return workout
 
+
+class WorkoutCalendarSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Workout
+        fields = ['id', 'name', 'workout_type', 'date']
+
 class MealItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = MealItem
