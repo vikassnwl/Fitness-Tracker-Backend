@@ -17,43 +17,6 @@ from .serializers import (
 )
 
 VALID_SPLITS = {'push', 'pull', 'legs'}
-DEFAULT_LOG_SET_COUNT = 3
-
-
-def _append_exercise_to_existing_split_logs(user, split, exercise):
-    workouts = (
-        Workout.objects.filter(user=user, workout_type=split)
-        .annotate(
-            max_order=Max('exercises__order'),
-            matching_entries=Count('exercises', filter=Q(exercises__exercise=exercise)),
-        )
-    )
-    created_entries = []
-    for workout in workouts:
-        if workout.matching_entries:
-            continue
-        next_order = 0 if workout.max_order is None else workout.max_order + 1
-        created_entries.append(
-            WorkoutExercise.objects.create(
-                workout=workout,
-                exercise=exercise,
-                order=next_order,
-            )
-        )
-    if not created_entries:
-        return
-    ExerciseSet.objects.bulk_create([
-        ExerciseSet(
-            workout_exercise=entry,
-            set_number=set_number,
-            weight=0,
-            reps=0,
-            completed=False,
-            notes='',
-        )
-        for entry in created_entries
-        for set_number in range(1, DEFAULT_LOG_SET_COUNT + 1)
-    ])
 
 
 class ExerciseViewSet(viewsets.ModelViewSet):
@@ -92,11 +55,8 @@ class SplitDayExerciseViewSet(viewsets.ModelViewSet):
         split = serializer.validated_data['split']
         if split not in VALID_SPLITS:
             raise serializers.ValidationError({'split': 'Invalid split.'})
-        exercise = serializer.validated_data['exercise']
         next_order = SplitDayExercise.objects.filter(user=self.request.user, split=split).count()
-        with transaction.atomic():
-            serializer.save(user=self.request.user, order=next_order)
-            _append_exercise_to_existing_split_logs(self.request.user, split, exercise)
+        serializer.save(user=self.request.user, order=next_order)
 
     @action(detail=False, methods=['post'])
     def reorder(self, request):
